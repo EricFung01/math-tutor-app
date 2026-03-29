@@ -53,47 +53,41 @@ def call_deepseek(messages: List[Dict], temperature: float = 0.3, retries: int =
                 raise Exception(f"Network error: {str(e)}")
 
 
-def get_wolfram_result(query: str) -> Optional[str]:
-    """Get Wolfram Alpha result for a specific query"""
-    try:
-        response = requests.get(
-            "https://api.wolframalpha.com/v2/query",
-            params={
-                "input": query,
-                "output": "JSON",
-                "appid": st.secrets["WOLFRAM_APP_ID"]
-            },
-            timeout=30
-        )
-        
-        if response.status_code != 200:
-            return None
-        
-        data = response.json()
-        
-        if not data.get("queryresult", {}).get("success", False):
-            return None
-        
-        results = []
-        for pod in data.get("queryresult", {}).get("pods", []):
-            if pod.get("title") == "Input":
-                continue
-            for subpod in pod.get("subpods", []):
-                text = subpod.get("plaintext", "")
-                if text and text.strip():
-                    # FIX THE WOLFRAM RESULT AT THE SOURCE
-                    # Replace the broken integral formatting with proper LaTeX
-                    text = text.replace('\\left \\frac{x^3}{3} \\right 0 2 0 2', 
-                                       '\\left. \\frac{x^3}{3} \\right|_0^2')
-                    text = text.replace('\\left \\frac{x^3}{3} \\right \n0\n2\n0\n2', 
-                                       '\\left. \\frac{x^3}{3} \\right|_0^2')
-                    results.append(text.strip())
-        
-        return "\n".join(results) if results else None
-        
-    except Exception as e:
-        return None
-
+def get_wolfram_result(query: str, retries: int = 2) -> Optional[str]:
+    for attempt in range(retries):
+        try:
+            response = requests.get(
+                "https://api.wolframalpha.com/v2/query",
+                params={
+                    "input": query,
+                    "output": "JSON",
+                    "appid": st.secrets["WOLFRAM_APP_ID"]
+                },
+                timeout=60  # increased from 30 to 60 seconds
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("queryresult", {}).get("success", False):
+                    # ... existing result extraction code ...
+                    return "\n".join(results)
+                else:
+                    # Log why it failed
+                    error_msg = data.get("queryresult", {}).get("error", {}).get("msg", "Unknown error")
+                    st.warning(f"Wolfram API error (attempt {attempt+1}): {error_msg}")
+            else:
+                st.warning(f"Wolfram HTTP {response.status_code} (attempt {attempt+1})")
+        except requests.exceptions.Timeout:
+            if attempt < retries - 1:
+                st.warning(f"Wolfram timeout, retrying... ({attempt+1}/{retries})")
+                time.sleep(2)
+            else:
+                return None
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(2)
+            else:
+                return None
+    return None
 
 
 def get_wolfram_code(problem: str) -> str:
